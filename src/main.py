@@ -7,11 +7,16 @@ import util
 
 
 def initiative_tracker(_):
+    print("When done entering characters, press Ctrl+D or Ctrl+C, or enter an empty name.")
     entries = {}
     while True:
         try:
-            charname = input("Character Name: ")
+            charname = input("Character Name: ").strip()
         except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not charname:
             break
 
         if charname in entries:
@@ -29,6 +34,7 @@ def initiative_tracker(_):
                 print("Please enter an integer value.")
 
         if count is None:
+            print()
             break
 
         is_enemy = util.get_yesno("Is this character an enemy?", default=False)
