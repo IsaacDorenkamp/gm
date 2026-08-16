@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
+import pathlib
 
 import initiative
+import models
 import util
 
 
@@ -53,16 +56,33 @@ def initiative_tracker(_):
             print(f"\x1b[32;1m[{value}]\x1b[0m {characters}")
 
 
-def main():
+def initialize(_):
+    c = models.Campaign()
+    at = pathlib.Path(os.getcwd())
+    try:
+        c.save(pathlib.Path(at), exist_ok=False)
+    except Exception as exc:
+        print(f"\x1b[31;1mError:\x1b[0m {str(exc)}")
+        return 1
+
+    print(f"\x1b[32;1mSuccessfully\x1b[0m initialized campaign at {at}")
+
+
+def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(required=True)
+
+    initialize_parser = commands.add_parser("init")
+    initialize_parser.set_defaults(func=initialize)
+
     initiative_tracker_parser = commands.add_parser("track")
     initiative_tracker_parser.set_defaults(func=initiative_tracker)
 
     args = parser.parse_args()
-    args.func(args)
+    return args.func(args) or 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())
 
