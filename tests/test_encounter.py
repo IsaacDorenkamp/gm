@@ -8,6 +8,10 @@ def make_character(name: str, is_enemy: bool = False) -> models.Character:
     return models.Character(name=name, max_hp=10, hp=10, temp_hp=0, is_enemy=is_enemy)
 
 
+def group_names(groups: list[encounter.InitiativeGroup]):
+    return [[entry for entry in group.characters] for group in groups]
+
+
 @pytest.fixture
 def characters(request):
     return [make_character(name, is_enemy="Enemy" in name) for name in request.param]
@@ -17,7 +21,7 @@ def test_encounter_add_character():
     c = make_character("Test")
     e = encounter.Encounter()
     e.add_character(c, 10)
-    assert e.initiative_groups == [["Test"]]
+    assert group_names(e.initiative_groups) == [["Test"]]
 
 
 with_characters = pytest.mark.parametrize("characters", (("Enemy 1", "Enemy 2", "Player 1", "Player 2"),), indirect=True)
@@ -31,7 +35,7 @@ def test_encounter_add_character_multiple(characters: list[models.Character]):
     e.add_character(e2, 10)
     e.add_character(p1, 10)
     e.add_character(p2, 5)
-    assert e.initiative_groups == [["Enemy 1", "Enemy 2"], ["Player 1"], ["Player 2"]]
+    assert group_names(e.initiative_groups) == [["Enemy 1", "Enemy 2"], ["Player 1"], ["Player 2"]]
 
 
 @with_characters
@@ -41,14 +45,14 @@ def test_encounter_add_character_during_encounter(characters: list[models.Charac
     e.add_character(e1, 10)
     e.add_character(p1, 9)
     e.add_character(p2, 9)
-    assert e.initiative_groups == [["Enemy 1"], ["Player 1", "Player 2"]]
+    assert group_names(e.initiative_groups) == [["Enemy 1"], ["Player 1", "Player 2"]]
     e.begin()
     assert e.active_character.name == "Enemy 1"
     e.next_turn()
     assert e.active_character.name == "Player 1"
     e.add_character(e2, 15)
     assert e.active_character.name == "Player 1"
-    assert e.initiative_groups == [["Enemy 2"], ["Enemy 1"], ["Player 1", "Player 2"]]
+    assert group_names(e.initiative_groups) == [["Enemy 2"], ["Enemy 1"], ["Player 1", "Player 2"]]
 
 
 @with_characters
@@ -60,7 +64,7 @@ def test_encounter_remove_character(characters: list[models.Character]):
     e.add_character(p1, 10)
     e.add_character(p2, 10)
     e.remove_character("Player 1")
-    assert e.initiative_groups == [["Enemy 1", "Enemy 2"], ["Player 2"]]
+    assert group_names(e.initiative_groups) == [["Enemy 1", "Enemy 2"], ["Player 2"]]
 
 
 @with_characters

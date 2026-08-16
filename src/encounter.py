@@ -1,8 +1,16 @@
 import bisect
 import curses
+from dataclasses import dataclass
+from typing import Generator
 
 from models import Action, Character, InitiativeKey
 import util
+
+
+@dataclass
+class InitiativeGroup:
+    characters: list[str]
+    count: int
 
 
 class Encounter:
@@ -86,13 +94,18 @@ class Encounter:
             raise ValueError("Encounter is not active!")
 
     @property
-    def initiative_groups(self) -> list[list[str]]:
+    def initiative_groups(self) -> list[InitiativeGroup]:
         agg = util.aggregate(self.__initiative, key=lambda x: x[0])
-        return [[entry[1].name for entry in group] for group in agg]
+        return [InitiativeGroup(characters=[entry[1].name for entry in group], count=group[0][0].count) for group in agg]
 
     @property
     def actions(self) -> int:
         return self.__actions
+
+    @property
+    def characters(self) -> Generator[Character, None, None]:
+        for x in self.__initiative:
+            yield x[1]
 
 
 def run_encounter(_):
@@ -100,9 +113,67 @@ def run_encounter(_):
 
 
 # TODO: Accept pre-built encounters
-def _run_encounter(stdscr):
-    # TODO: Implement
-    try:
-        stdscr.getch()
-    except:
-        pass
+def _run_encounter(stdscr: curses.window):
+    encounter = Encounter()
+
+    tracker_lines: list[str]
+    tracker_height: int
+    tracker_width: int
+
+    command_start: tuple[int, int] = (0, 0)
+    command = ''
+
+    running = True
+
+    def update_tracker():
+        # first: calculate size of initiative tracker
+        nonlocal tracker_lines
+        nonlocal tracker_height
+        nonlocal tracker_width
+        tracker_lines = ["[%02d] %s" % (group.count, ', '.join(group.characters)) for group in encounter.initiative_groups]
+        tracker_height = len(tracker_lines)
+        tracker_width = max(len(line) for line in tracker_lines) if tracker_lines else 0
+
+        nonlocal command_start
+        command_start = tracker_height + 1, 0
+
+    def command_write(ch: str):
+        nonlocal command
+        command += ch
+        stdscr.move(command_start[0], command_start[1] + len(command))
+        stdscr.addch(ch)
+        stdscr.refresh()
+
+    def command_run():
+        nonlocal command
+
+        if command == "/exit":
+            nonlocal running
+            running = False
+
+        command = ""
+
+        stdscr.move(*command_start)
+        stdscr.clrtoeol()
+        stdscr.refresh()
+
+    def update_all():
+        update_tracker()
+
+    update_all()
+
+    mode = 0  # 0 = global, 1 = command
+    while running:
+        ch = stdscr.getch()
+        curses.beep()
+        match mode:
+            case 0:
+                if ch == ord('/'):
+                    mode = 1
+                    command_write('/')
+            case 1:
+                if ch == ord('\n'):
+                    command_run()
+                else:
+                    command_write(chr(ch))
+
