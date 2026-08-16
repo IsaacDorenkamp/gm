@@ -4,6 +4,7 @@ import argparse
 import os
 import pathlib
 
+import encounter
 import initiative
 import models
 import util
@@ -77,6 +78,12 @@ def main() -> int:
 
     initiative_tracker_parser = commands.add_parser("track")
     initiative_tracker_parser.set_defaults(func=initiative_tracker)
+
+    encounter_parser = commands.add_parser("encounter")
+    encounter_commands = encounter_parser.add_subparsers(required=True)
+
+    run_encounter_parser = encounter_commands.add_parser("run")
+    run_encounter_parser.set_defaults(func=encounter.run_encounter)
 
     args = parser.parse_args()
     return args.func(args) or 0

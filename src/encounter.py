@@ -1,4 +1,5 @@
 import bisect
+import curses
 
 from models import Action, Character, InitiativeKey
 import util
@@ -93,3 +94,15 @@ class Encounter:
     def actions(self) -> int:
         return self.__actions
 
+
+def run_encounter(_):
+    curses.wrapper(_run_encounter)
+
+
+# TODO: Accept pre-built encounters
+def _run_encounter(stdscr):
+    # TODO: Implement
+    try:
+        stdscr.getch()
+    except:
+        pass
