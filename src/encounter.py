@@ -1,9 +1,11 @@
 import bisect
+from collections import defaultdict
 import curses
+import curses.textpad
 from dataclasses import dataclass
 from typing import Generator
 
-from models import Action, Character, InitiativeKey
+from models import Action, Character, InitiativeCount, InitiativeKey
 import util
 
 
@@ -112,68 +114,123 @@ def run_encounter(_):
     curses.wrapper(_run_encounter)
 
 
+class InitiativeWindow:
+    __size: tuple[int, int]
+    __pad: curses.window
+
+    # block: tuple[begin_y, begin_x, columns]
+    __blocks: dict[str, list[tuple[int, int, int]]]
+    __counts: dict[int, int]
+    __lines: list[str]
+
+    def __init__(self, entries: list[InitiativeCount]):
+        self.__generate(entries)
+
+    def __generate(self, entries: list[InitiativeCount], line_width: int = 25):
+        self.__counts = {}
+        blocks = defaultdict(list)
+        line    = 1
+        column  = 1
+        lines   = [" Initiative"]
+        text    = " "
+        for entry in entries:
+            # first, initiative count
+            self.__counts[entry.count] = line
+            text += f"[%02d] " % entry.count
+            column += len(text)
+            words = ", ".join(entry.characters).split(" ")
+            while len(words):
+                word = words[0]
+                needed_columns = len(word)
+                remaining = line_width - column
+                # the word is too long to hold on a single
+                # line, no matter what, so take as much of
+                # the word as we can
+                if needed_columns > remaining:
+                    portion = words[0][:(line_width - column + 1)]
+                    words[0] = words[0][line_width:]
+                elif needed_columns > remaining:
+                    # goto next line in order to fit it
+                    lines.append(text)
+                    text = " "
+                    column = 1
+                    line += 1
+                    continue
+                else:
+                    portion = words.pop(0)
+
+                blocks[word].append((line, column, len(portion)))
+                text += portion
+                column += len(portion)
+
+                if column < line_width:
+                    text += " "
+                    column += 1
+                else:
+                    lines.append(text)
+                    text = " "
+                    column = 1
+                    line += 1
+
+            if text != " ":
+                lines.append(text)
+                line += 1
+                column = 1
+                text = " "
+
+        if text != " ":
+            lines.append(text)
+
+        height = len(lines)
+
+        self.__size = (height, line_width)
+        self.__pad = curses.newpad(height, line_width)
+        self.__blocks = dict(blocks)
+        self.__lines = lines
+
+        for idx, line in enumerate(self.__lines):
+            self.__pad.move(idx, 0)
+            self.__pad.addnstr(line, line_width)
+
+    def render_to(self, target: tuple[int, int, int, int]):
+        self.__pad.refresh(0, 0, *target)
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return self.__size
+
+    # TODO: block highlighting
+
+
 # TODO: Accept pre-built encounters
 def _run_encounter(stdscr: curses.window):
     encounter = Encounter()
 
-    tracker_lines: list[str]
-    tracker_height: int
-    tracker_width: int
+    init_win = InitiativeWindow([InitiativeCount(characters=["Player 1", "Player 2"], count=20, is_enemy=False), InitiativeCount(characters=["Enemy 1"], count=15, is_enemy=True)])
+    resource_win = curses.newpad(35, 35)
+    command_win = curses.newpad(1, 50)
 
-    command_start: tuple[int, int] = (0, 0)
-    command = ''
+    curses.textpad.rectangle(stdscr, 0, 0, 17, 27)
+    stdscr.refresh()
+
+    init_win.render_to((1, 1, 10, 25))
 
     running = True
-
-    def update_tracker():
-        # first: calculate size of initiative tracker
-        nonlocal tracker_lines
-        nonlocal tracker_height
-        nonlocal tracker_width
-        tracker_lines = ["[%02d] %s" % (group.count, ', '.join(group.characters)) for group in encounter.initiative_groups]
-        tracker_height = len(tracker_lines)
-        tracker_width = max(len(line) for line in tracker_lines) if tracker_lines else 0
-
-        nonlocal command_start
-        command_start = tracker_height + 1, 0
-
-    def command_write(ch: str):
-        nonlocal command
-        command += ch
-        stdscr.move(command_start[0], command_start[1] + len(command))
-        stdscr.addch(ch)
-        stdscr.refresh()
-
-    def command_run():
-        nonlocal command
-
-        if command == "/exit":
-            nonlocal running
-            running = False
-
-        command = ""
-
-        stdscr.move(*command_start)
-        stdscr.clrtoeol()
-        stdscr.refresh()
-
-    def update_all():
-        update_tracker()
-
-    update_all()
-
     mode = 0  # 0 = global, 1 = command
     while running:
-        ch = stdscr.getch()
-        curses.beep()
+        try:
+            ch = stdscr.getch()
+        except KeyboardInterrupt:
+            break
         match mode:
             case 0:
                 if ch == ord('/'):
                     mode = 1
-                    command_write('/')
+                    #command_write('/')
             case 1:
                 if ch == ord('\n'):
                     command_run()
                 else:
-                    command_write(chr(ch))
+                    #command_write(chr(ch))
+                    ...
 
