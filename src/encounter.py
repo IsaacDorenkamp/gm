@@ -3,7 +3,7 @@ import curses
 from dataclasses import dataclass
 from typing import Generator
 
-from models import Action, Character, InitiativeKey
+from models import Action, Character, InitiativeEntry, InitiativeKey
 import util
 
 
@@ -112,9 +112,32 @@ def run_encounter(_):
     curses.wrapper(_run_encounter)
 
 
+class InitiativeWindow:
+    __size: tuple[int, int]
+    __pad: curses.window
+
+    # block: tuple[begin_y, begin_x, columns]
+    __blocks: dict[str, list[tuple[int, int, int]]]
+    __counts: dict[int, InitiativeEntry]
+    __lines: list[str]
+
+    def __init__(self, entries: list[InitiativeEntry]):
+        self.__generate(entries)
+
+    def __generate(self, entries: list[InitiativeEntry], line_width: int = 15):
+        line    = 0
+        column  = 1
+        for entry in entries:
+            ...
+
+
 # TODO: Accept pre-built encounters
 def _run_encounter(stdscr: curses.window):
     encounter = Encounter()
+
+    init_win = curses.newpad(10, 15)
+    resource_win = curses.newpad(35, 35)
+    command_win = curses.newpad(1, 50)
 
     tracker_lines: list[str]
     tracker_height: int
