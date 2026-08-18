@@ -76,7 +76,8 @@ class WrapBox:
                     portion = word
                 block = (self.__line, self.__column, len(portion))
                 self.__text += portion
-                self.__pushline()
+                if portion != word:
+                    self.__pushline()
                 word = word[remaining - 1:]
                 yield block
                 remaining = self.__width - self.__column
@@ -85,7 +86,7 @@ class WrapBox:
             self.__pushline()
             block = (self.__line, self.__column, len(word))
             self.__text += word
-            self.__column = len(word)
+            self.__column += len(word)
             yield block
         else:
             block = (self.__line, self.__column, len(word))

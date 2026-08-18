@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from enum import auto, Enum, IntEnum, StrEnum
 import json
 import pathlib
+from typing import cast
 
 
 class Ability(StrEnum):
@@ -185,12 +186,22 @@ class InitiativeKey:
     count: int
     is_enemy: bool
 
+    def __hash__(self):
+        return hash((self.count, self.is_enemy))
+
     def __lt__(self, other: InitiativeKey) -> bool:
         # higher counts should come first
         if self.count == other.count:
             return self.is_enemy > other.is_enemy
         else:
             return self.count > other.count
+
+    def __eq__(self, other_obj: object) -> bool:
+        if isinstance(other_obj, InitiativeKey):
+            other = cast(InitiativeKey, other_obj)
+            return self.count == other.count and self.is_enemy == other.is_enemy
+        else:
+            return False
 
 
 @dataclass
@@ -207,10 +218,8 @@ class InitiativeEntry:
 
 
 @dataclass
-class InitiativeCount:
+class InitiativeCount(InitiativeKey):
     characters: list[str]
-    count: int
-    is_enemy: bool
 
 
 @dataclass
