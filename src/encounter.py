@@ -5,6 +5,7 @@ import curses.textpad
 from dataclasses import dataclass
 from typing import Generator
 
+import gcurses
 from models import Action, Character, InitiativeCount, InitiativeKey
 import util
 
@@ -110,110 +111,113 @@ class Encounter:
             yield x[1]
 
 
-def run_encounter(_):
-    curses.wrapper(_run_encounter)
-
-
 class InitiativeWindow:
+    ALLY_COLOR  = curses.COLOR_GREEN
+    ENEMY_COLOR = curses.COLOR_RED
+
+    __pos: tuple[int, int]
     __size: tuple[int, int]
+    __box: gcurses.WrapBox
     __pad: curses.window
 
-    # block: tuple[begin_y, begin_x, columns]
-    __blocks: dict[str, list[tuple[int, int, int]]]
+    __name_blocks: dict[str, list[curses.window]]
     __counts: dict[int, int]
-    __lines: list[str]
 
-    def __init__(self, entries: list[InitiativeCount]):
+    __selected: str | None
+
+    def __init__(self, entries: list[InitiativeCount], size: tuple[int, int], pos: tuple[int, int] = (0, 0)):
+        self.__pos = pos
+        self.__size = size
+        self.__box = gcurses.WrapBox(size[1] - 3)
+        self.__counts = {}
+        self.__name_blocks = {}
+        self.__selected = None
         self.__generate(entries)
 
-    def __generate(self, entries: list[InitiativeCount], line_width: int = 25):
-        self.__counts = {}
+    def __generate(self, entries: list[InitiativeCount]):
+        ally_pair = gcurses.pair(self.ALLY_COLOR, -1)
+        enemy_pair = gcurses.pair(self.ENEMY_COLOR, -1)
+
+        self.__counts.clear()
+        self.__name_blocks.clear()
         blocks = defaultdict(list)
-        line    = 1
-        column  = 1
-        lines   = [" Initiative"]
-        text    = " "
+        countblocks = defaultdict(list)
+        self.__box.clear()
         for entry in entries:
-            # first, initiative count
-            self.__counts[entry.count] = line
-            text += f"[%02d] " % entry.count
-            column += len(text)
-            words = ", ".join(entry.characters).split(" ")
-            while len(words):
-                word = words[0]
-                needed_columns = len(word)
-                remaining = line_width - column
-                # the word is too long to hold on a single
-                # line, no matter what, so take as much of
-                # the word as we can
-                if needed_columns > remaining:
-                    portion = words[0][:(line_width - column + 1)]
-                    words[0] = words[0][line_width:]
-                elif needed_columns > remaining:
-                    # goto next line in order to fit it
-                    lines.append(text)
-                    text = " "
-                    column = 1
-                    line += 1
-                    continue
-                else:
-                    portion = words.pop(0)
+            self.__counts[entry.count] = self.__box.line
+            countblocks[enemy_pair if entry.is_enemy else ally_pair].extend(self.__box.write("[%02d] " % entry.count))
+            self.__box.indent = 5
+            for idx, name in enumerate(entry.characters):
+                if idx > 0:
+                    self.__box.write(', ')
+                for block in self.__box.write(name):
+                    blocks[name].append(block)
+            self.__box.indent = 0
+            self.__box.linebreak()
 
-                blocks[word].append((line, column, len(portion)))
-                text += portion
-                column += len(portion)
+        self.__pad = curses.newpad(self.__box.nlines, self.__box.width)
+        for name, text_blocks in blocks.items():
+            self.__name_blocks[name] = [self.__pad.subpad(1, block[2], block[0], block[1]) for block in text_blocks]
 
-                if column < line_width:
-                    text += " "
-                    column += 1
-                else:
-                    lines.append(text)
-                    text = " "
-                    column = 1
-                    line += 1
+        width = self.__size[1] - 2
+        for line_no, line in enumerate(self.__box):
+            self.__pad.move(line_no, 0)
+            self.__pad.addnstr(line, width)
 
-            if text != " ":
-                lines.append(text)
-                line += 1
-                column = 1
-                text = " "
+        for colorpair, blocks in countblocks.items():
+            for block in blocks:
+                subpad = self.__pad.subpad(1, block[2], block[0], block[1])
+                subpad.bkgd(colorpair | curses.A_BOLD)
 
-        if text != " ":
-            lines.append(text)
+        for group in self.__name_blocks.values():
+            for block in group:
+                block.bkgd(curses.A_DIM)
 
-        height = len(lines)
+        self.set_selected(self.__selected)
 
-        self.__size = (height, line_width)
-        self.__pad = curses.newpad(height, line_width)
-        self.__blocks = dict(blocks)
-        self.__lines = lines
+    def set_selected(self, name: str | None):
+        if name is not None and name not in self.__name_blocks:
+            raise ValueError(f"No character {name}")
+        if self.__selected is not None:
+            for block in self.__name_blocks[self.__selected]:
+                block.bkgd(curses.A_DIM)
+        self.__selected = name
+        if self.__selected is not None:
+            for block in self.__name_blocks[self.__selected]:
+                block.bkgd(curses.A_BOLD)
+        self.refresh()
 
-        for idx, line in enumerate(self.__lines):
-            self.__pad.move(idx, 0)
-            self.__pad.addnstr(line, line_width)
+    def render(self, window: curses.window):
+        curses.textpad.rectangle(window, self.__pos[0], self.__pos[1], self.__pos[0] + self.__size[0], self.__pos[1] + self.__size[1])
+        window.move(self.__pos[0], self.__pos[1] + 2)
+        window.addstr("Initiative", curses.A_BOLD)
+        window.refresh()
+        self.refresh()
 
-    def render_to(self, target: tuple[int, int, int, int]):
-        self.__pad.refresh(0, 0, *target)
+    def refresh(self):
+        self.__pad.refresh(0, 0, self.__pos[0] + 1, self.__pos[1] + 1, self.__pos[0] + self.__size[0] - 1, self.__pos[1] + self.__size[1] - 1)
 
     @property
     def size(self) -> tuple[int, int]:
         return self.__size
 
-    # TODO: block highlighting
-
 
 # TODO: Accept pre-built encounters
 def _run_encounter(stdscr: curses.window):
-    encounter = Encounter()
+    curses.use_default_colors()
+    curses.curs_set(0)
 
-    init_win = InitiativeWindow([InitiativeCount(characters=["Player 1", "Player 2"], count=20, is_enemy=False), InitiativeCount(characters=["Enemy 1"], count=15, is_enemy=True)])
-    resource_win = curses.newpad(35, 35)
-    command_win = curses.newpad(1, 50)
+    init_win = InitiativeWindow(
+        [InitiativeCount(characters=["Player 1", "Player 2"], count=20, is_enemy=False), InitiativeCount(characters=["Enemy 1"], count=15, is_enemy=True)],
+        (15, 25),
+    )
 
-    curses.textpad.rectangle(stdscr, 0, 0, 17, 27)
     stdscr.refresh()
+    init_win.render(stdscr)
 
-    init_win.render_to((1, 1, 10, 25))
+    chars = ["Player 1", "Player 2", "Enemy 1"]
+    selected = 0
+    init_win.set_selected(chars[selected])
 
     running = True
     mode = 0  # 0 = global, 1 = command
@@ -224,13 +228,14 @@ def _run_encounter(stdscr: curses.window):
             break
         match mode:
             case 0:
-                if ch == ord('/'):
-                    mode = 1
-                    #command_write('/')
-            case 1:
-                if ch == ord('\n'):
-                    command_run()
-                else:
-                    #command_write(chr(ch))
-                    ...
+                if ch == ord('n'):
+                    selected = (selected + 1) % len(chars)
+                    init_win.set_selected(chars[selected])
+                elif ch == ord('p'):
+                    selected = (selected - 1) % len(chars)
+                    init_win.set_selected(chars[selected])
+
+
+def run_encounter(_):
+    curses.wrapper(_run_encounter)
 
