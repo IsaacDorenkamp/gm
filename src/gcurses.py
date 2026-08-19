@@ -1,4 +1,5 @@
 import curses
+import string
 from typing import Generator
 
 
@@ -127,4 +128,115 @@ class WrapBox:
         yield from self.__lines
         if self.__text:
             yield self.__text
+
+
+class LineEdit:
+    __window: curses.window
+    __width: int
+    __text: str
+    __offset: int
+
+    def __init__(self, pos: tuple[int, int], width: int, text: str = ""):
+        self.__window = curses.newwin(1, width, *pos)
+        self.__width = width
+        self.__text = ""
+        self.__offset = 0
+        self.append(text)
+
+    def clear(self):
+        self.__text = ""
+        self.__window.erase()
+        self.__offset = 0
+
+    def append(self, text: str):
+        self.__text += text
+        if len(self.__text) > self.__width - 1:
+            portion = self.__text[len(self.__text) - (self.__width - 1):]
+        else:
+            portion = text
+        self.__window.erase()
+        self.__window.addnstr(portion, self.__width - 1)
+        self.__window.refresh()
+
+    def putchar(self, ch: str):
+        if len(ch) != 1:
+            raise ValueError("ch must be exactly 1 character")
+        relpos = self.__window.getyx()[1]
+        index = relpos + self.__offset
+        self.__text = self.__text[:index] + ch + self.__text[index:]
+        if relpos == self.__width:
+            self.__window.insch(ch)
+            self.__window.move(0, 0)
+            self.__window.delch()
+            self.__window.move(0, self.__width - 1)
+        else:
+            self.__window.insch(ch)
+            self.mvcursor(index + 1)
+        self.__window.refresh()
+
+    def delchar(self):
+        pos = self.__window.getyx()[1]
+        index = pos + self.__offset
+        if index > 0:
+            to_remove = index - 1
+            self.__text = self.__text[:to_remove] + self.__text[to_remove+1:]
+            if pos == 0:
+                self.__move_offset(self.__offset - 1)
+            else:
+                self.__window.move(0, pos - 1)
+                self.__window.delch()
+                self.__window.refresh()
+
+    def mvcursor(self, pos: int):
+        if pos < 0 or pos > len(self.__text):
+            raise ValueError(f"Position {pos} out of bounds")
+
+        max_pos = self.__offset + self.__width - 1
+        if pos < self.__offset:
+            self.__move_offset(pos)
+            self.__window.move(0, 0)
+        elif pos > max_pos:
+            self.__move_offset(pos - self.__width + 1)
+        else:
+            adjusted = pos - self.__offset
+            self.__window.move(0, adjusted)
+
+        self.__window.refresh()
+
+    def __move_offset(self, offset: int):
+        self.__offset = offset
+        self.__redraw()
+
+    def __redraw(self):
+        self.__window.erase()
+        portion = self.__text[self.__offset:self.__offset+self.__width]
+        try:
+            self.__window.addnstr(portion, self.__width)
+        except curses.error:
+            pass
+
+    def keystroke(self, key: int) -> bool:
+        match key:
+            case 127:
+                self.delchar()
+            case curses.KEY_RIGHT:
+                pos = self.__window.getyx()[1]
+                abs_pos = pos + self.__offset
+                self.mvcursor(min(abs_pos + 1, len(self.__text)))
+            case curses.KEY_LEFT:
+                pos = self.__window.getyx()[1]
+                abs_pos = pos + self.__offset
+                self.mvcursor(max(0, abs_pos - 1))
+            case _:
+                ch = chr(key)
+                if ch in string.printable:
+                    self.putchar(ch)
+                else:
+                    return False
+
+        return True
+
+    @property
+    def text(self) -> str:
+        return self.__text
 

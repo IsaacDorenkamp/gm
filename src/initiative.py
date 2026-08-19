@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import bisect
-from dataclasses import dataclass
 
 from models import Character, InitiativeCount, InitiativeKey
-import util
 
 
 class Roster:

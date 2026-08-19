@@ -45,16 +45,16 @@ def initiative_tracker(_):
 
         entries[charname] = (is_enemy, count)
 
-    entries = [initiative.InitiativeEntry(charname, value, is_enemy) for charname, (is_enemy, value) in entries.items()]
-    groups = initiative.sort(entries)
-    for group in groups:
-        is_enemy = group[0].is_enemy
-        value = group[0].count
-        characters = ', '.join(item.name for item in group)
-        if is_enemy:
-            print(f"\x1b[31;1m[{value}]\x1b[0m {characters}")
+    roster = initiative.Roster()
+    for name, (is_enemy, count) in entries.items():
+        c = models.Character(name=name, max_hp=1, hp=1, temp_hp=0, is_enemy=is_enemy)
+        roster.add_character(c, count)
+    for group in roster.counts:
+        characters = ', '.join(item for item in group.characters)
+        if group.is_enemy:
+            print(f"\x1b[31;1m[{group.count}]\x1b[0m {characters}")
         else:
-            print(f"\x1b[32;1m[{value}]\x1b[0m {characters}")
+            print(f"\x1b[32;1m[{group.count}]\x1b[0m {characters}")
 
 
 def initialize(_):

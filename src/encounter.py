@@ -223,7 +223,6 @@ class InitiativeWindow:
         if name is not None and name not in self.__name_blocks:
             raise ValueError(f"No character {name}")
         if self.__selected is not None:
-            # TODO: update with scrolling
             for block in self.__name_blocks[self.__selected]:
                 block.bkgd(curses.A_DIM)
         self.__selected = name
@@ -288,6 +287,7 @@ def _run_encounter(stdscr: curses.window):
         stdscr,
         (15, 25),
     )
+    command_box = gcurses.LineEdit((16, 0), 35)
 
     stdscr.refresh()
     init_win.render()
@@ -311,6 +311,12 @@ def _run_encounter(stdscr: curses.window):
                 elif ch == ord('p'):
                     selected = (selected - 1) % len(chars)
                     init_win.set_selected(chars[selected])
+                elif ch == ord('/'):
+                    curses.curs_set(1)
+                    mode = 1
+                    command_box.append('/')
+            case 1:
+                command_box.keystroke(ch)
 
 
 def run_encounter(_):
