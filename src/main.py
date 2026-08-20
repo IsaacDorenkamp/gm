@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
+import sys
+import traceback
 
 import encounter
 import initiative
 import models
+import repo
 import util
 
 
@@ -57,16 +61,38 @@ def initiative_tracker(_):
             print(f"\x1b[32;1m[{group.count}]\x1b[0m {characters}")
 
 
-def initialize(_):
-    c = models.Campaign()
-    at = pathlib.Path(os.getcwd())
-    try:
-        c.save(pathlib.Path(at), exist_ok=False)
-    except Exception as exc:
-        print(f"\x1b[31;1mError:\x1b[0m {str(exc)}")
-        return 1
+def initialize(_) -> int:
+    gm_dir = os.environ.get("GM_DIR")
+    if gm_dir:
+        at = pathlib.Path(gm_dir)
+        if not at.exists():
+            at.mkdir(parents=True)
+    else:
+        at = pathlib.Path(os.getcwd())
+
+    # TODO: check if a complete initialization has already occurred
+
+    with open(at / "players.json", "w") as fp:
+        json.dump({}, fp)
 
     print(f"\x1b[32;1mSuccessfully\x1b[0m initialized campaign at {at}")
+    return 0
+
+
+def add_player(args):
+    player = models.Player(id=args.id, name=args.name, max_hp=args.hp)
+    try:
+        repo.players.create(player)
+        repo.players.sync()
+    except repo.RepoError as err:
+        print(f"\x1b[31;1mError:\x1b[0m {err}")
+        return 1
+    print(f"\x1b[32;1mSuccessfully\x1b[0m Created player \x1b[1m{player.id}\x1b[0m")
+
+
+def list_players(_):
+    for player in repo.players.all():
+        print(f"\x1b[1m{player.id}\x1b[0m: {player.name} (\x1b[32m{player.max_hp}hp\x1b[0m)")
 
 
 def main() -> int:
@@ -79,6 +105,18 @@ def main() -> int:
     initiative_tracker_parser = commands.add_parser("track")
     initiative_tracker_parser.set_defaults(func=initiative_tracker)
 
+    player_parser = commands.add_parser("players")
+    player_commands = player_parser.add_subparsers(required=True)
+
+    add_player_cmd = player_commands.add_parser("add")
+    add_player_cmd.add_argument("--id", type=str, help="Player ID, used to succinctly identify the player.", required=True)
+    add_player_cmd.add_argument("--name", type=str, help="Display name for the player.", required=True)
+    add_player_cmd.add_argument("--hp", type=int, help="Player's max HP.", required=True)
+    add_player_cmd.set_defaults(func=add_player)
+
+    list_players_cmd = player_commands.add_parser("list")
+    list_players_cmd.set_defaults(func=list_players)
+
     encounter_parser = commands.add_parser("encounter")
     encounter_commands = encounter_parser.add_subparsers(required=True)
 
@@ -90,6 +128,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())
 

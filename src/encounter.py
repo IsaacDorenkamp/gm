@@ -5,9 +5,11 @@ import curses.textpad
 from dataclasses import dataclass
 from typing import Generator
 
+import commands
 import gcurses
 import initiative
 from models import Action, Character, InitiativeCount, InitiativeKey
+import repo
 import util
 
 
@@ -171,7 +173,7 @@ class InitiativeWindow:
             self.__box.indent = 0
             self.__box.linebreak()
 
-        self.__pad = curses.newpad(self.__box.nlines, self.__box.width)
+        self.__pad = curses.newpad(self.__box.nlines or 1, self.__box.width or 1)
         for name, text_blocks in blocks.items():
             self.__name_blocks[name] = [self.__pad.subpad(1, block[2], block[0], block[1]) for block in text_blocks]
 
@@ -259,6 +261,8 @@ class InitiativeWindow:
         self.__pad.refresh(self.__scroll, 0, self.__pos[0] + 1, self.__pos[1] + 1, self.__pos[0] + self.__size[0] - 1, self.__pos[1] + self.__size[1] - 1)
 
     def set_initiative(self, initiative: list[InitiativeCount]):
+        self.__pad.erase()
+        self.refresh()
         self.__generate(initiative)
         # deselect if name is missing
         if self.__selected is not None and self.__selected not in self.__name_blocks:
@@ -277,11 +281,6 @@ def _run_encounter(stdscr: curses.window):
     curses.curs_set(0)
 
     roster = initiative.Roster()
-    characters = []
-    for i in range(20):
-        c = Character(max_hp=10, hp=(0 if i % 10 == 7 else 10), temp_hp=0, name=f"Character {i + 1}", is_enemy=bool(i % 3))
-        roster.add_character(c, i + 1)
-        characters.append(c)
     init_win = InitiativeWindow(
         roster.counts,
         stdscr,
@@ -294,7 +293,26 @@ def _run_encounter(stdscr: curses.window):
 
     chars = roster.characters
     selected = 0
-    init_win.set_selected(chars[selected])
+
+    parser = commands.CommandParser()
+
+    add_cmd = commands.Command("add")
+    add_cmd.add_argument(commands.ArgType.Choice, "type", choices=["player", "enemy", "npc"])
+    add_cmd.add_argument(commands.ArgType.Int, "count")
+    add_cmd.add_argument(commands.ArgType.Remainder, "name")
+
+    rm_cmd = commands.Command("rm")
+    rm_cmd.add_argument(commands.ArgType.Choice, "type", choices=["player", "enemy", "npc"])
+    rm_cmd.add_argument(commands.ArgType.Remainder, "name")
+
+    parser.add_command(add_cmd)
+    parser.add_command(rm_cmd)
+
+    def echo(string: str):
+        stdscr.move(0, 30)
+        stdscr.clrtoeol()
+        stdscr.addstr(string)
+        stdscr.refresh()
 
     running = True
     mode = 0  # 0 = global, 1 = command
@@ -316,7 +334,64 @@ def _run_encounter(stdscr: curses.window):
                     mode = 1
                     command_box.append('/')
             case 1:
-                command_box.keystroke(ch)
+                if ch == 10:
+                    text = command_box.text
+                    command_box.clear()
+                    curses.curs_set(0)
+
+                    try:
+                        command, args = parser.parse_command(text)
+                    except ValueError as err:
+                        # TODO: handle!
+                        echo(f"Failed to parse: {err}")
+                        mode = 0
+                        continue
+
+                    match command:
+                        case "add":
+                            char_type = args["type"]
+                            count = args["count"]
+                            name = args["name"]
+
+                            if char_type == "player":
+                                try:
+                                    player = repo.players.get(name)
+                                except repo.RepoError as re:
+                                    echo(f"Error: {str(re)}")
+                                    continue
+
+                                char = Character(name=player.name, max_hp=player.max_hp, hp=player.max_hp, temp_hp=0, is_enemy=False)
+                            else:
+                                char = Character(name=name, max_hp=1, hp=1, temp_hp=0, is_enemy=char_type == "enemy")
+
+                            try:
+                                roster.add_character(char, count)
+                                init_win.set_initiative(roster.counts)
+                                chars = roster.characters
+                            except ValueError as err:
+                                echo(f"Error: {err}")
+                        case "rm":
+                            char_type, name = args["type"], args["name"]
+
+                            if char_type == "player":
+                                try:
+                                    player = repo.players.get(name)
+                                except repo.RepoError as re:
+                                    echo(f"Error: {str(re)}")
+                                    continue
+                                name = player.name
+
+                            try:
+                                roster.remove_character(name)
+                                init_win.set_initiative(roster.counts)
+                                chars = roster.characters
+                            except ValueError as err:
+                                echo(f"Error: {err}")
+
+
+                    mode = 0
+                else:
+                    command_box.keystroke(ch)
 
 
 def run_encounter(_):

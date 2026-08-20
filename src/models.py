@@ -1,8 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import auto, Enum, IntEnum, StrEnum
-import json
-import pathlib
 from typing import cast
 
 
@@ -224,32 +222,7 @@ class InitiativeCount(InitiativeKey):
 
 @dataclass
 class Player:
+    id: str
     name: str
-
-    def serialize(self):
-        return {
-            "name": self.name
-        }
-
-
-@dataclass
-class Campaign:
-    players: list[Player] = field(default_factory=list)
-
-    @classmethod
-    def load(cls, directory: pathlib.Path):
-        player_file = directory / "players.json"
-        with open(player_file, 'r') as fp:
-            contents = json.load(fp)
-
-        players = [Player(**item) for item in contents]
-
-        return cls(players=players)
-
-    def save(self, directory: pathlib.Path, exist_ok: bool = True):
-        player_file = directory / "players.json"
-        if not exist_ok and player_file.is_file():
-            raise RuntimeError("players.json already exists!")
-        with open(player_file, 'w') as fp:
-            json.dump([player.serialize() for player in self.players], fp)
+    max_hp: int
 

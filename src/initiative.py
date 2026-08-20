@@ -14,6 +14,8 @@ class Roster:
         self.__characters = {}
 
     def add_character(self, character: Character, count: int):
+        if character.name in self.__characters:
+            raise ValueError(f"Character '{character.name}' is already in turn order!")
         key = InitiativeKey(count=count, is_enemy=character.is_enemy)
         self.__characters[character.name] = key
         exist_count = next((count for count in self.__counts if key == count), None)
@@ -30,9 +32,11 @@ class Roster:
         if key is None:
             raise ValueError(f"No character exists in initiative: {character}")
         else:
-            count = next((count for count in self.__counts if key == count))
+            idx, count = next((entry for entry in enumerate(self.__counts) if key == entry[1]))
             count.characters.remove(character)
             del self.__characters[character]
+            if not count.characters:
+                self.__counts.pop(idx)
 
     @property
     def counts(self) -> list[InitiativeCount]:

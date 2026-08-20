@@ -53,9 +53,9 @@ class StringArg(Argument[str]):
 
         result = io.StringIO()
         idx = -1
-        for idx, ch in enumerate(string[1:]):
+        for idx, ch in enumerate(string[1:] if bookend else string):
             if (
-                ch == bookend and
+                ch == bookend or
                 (ch == ' ' and bookend is None)
             ):
                 bookend = None
@@ -78,7 +78,7 @@ class ChoiceArg(StringArg):
     def read(self, string: str) -> tuple[str, str]:
         value, remainder = super().read(string)
         if value not in self.__choices:
-            raise ValueError(f"'{self.name}' must be one of: {', '.join(self.__choices)}'")
+            raise ValueError(f"'{self.name}' must be one of: {', '.join(self.__choices)}; got '{value}'")
         return value, remainder
 
 
@@ -110,9 +110,11 @@ class IntArg(Argument[int]):
     def read(self, string: str) -> tuple[int, str]:
         result = io.StringIO()
         idx = -1
-        for idx, ch in string:
+        for idx, ch in enumerate(string):
             if ch in self.digits:
                 result.write(ch)
+            elif ch.isspace():
+                break
             else:
                 raise ValueError(f"{self.name} must only contain these digits: {self.digits}")
 
@@ -161,9 +163,15 @@ class Command:
                 arg = IntArg(name, *args, **kwargs)
         self.__args.append(arg)
 
-    def parse_args(self, args: str):
-        # TODO: implement
-        ...
+    def parse_args(self, args: str) -> dict[str, typing.Any]:
+        args = args.strip()
+        values = {}
+        for arg in self.__args:
+            while args and args[0].isspace():
+                args = args[1:]
+            value, args = arg.read(args)
+            values[arg.name] = value
+        return values
 
 
 class CommandParser:
@@ -175,7 +183,7 @@ class CommandParser:
     def add_command(self, command: Command):
         self.__commands[command.name] = command
 
-    def parse_command(self, string: str):
+    def parse_command(self, string: str) -> tuple[str, dict[str, typing.Any]]:
         if not string:
             raise ValueError("command cannot be empty")
 
@@ -189,11 +197,12 @@ class CommandParser:
             raise ValueError(f"no command '{command_str}'")
 
         command = self.__commands[command_str]
-
         if len(what_remains) == 2:
             arguments = command.parse_args(what_remains[1])
         else:
-            arguments = []
+            arguments = {}
+
+        return command.name, arguments
 
 
 def parse(command: str):
