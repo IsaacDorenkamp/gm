@@ -146,6 +146,7 @@ class LineEdit:
     def clear(self):
         self.__text = ""
         self.__window.erase()
+        self.__window.refresh()
         self.__offset = 0
 
     def append(self, text: str):
@@ -218,6 +219,8 @@ class LineEdit:
     def keystroke(self, key: int) -> bool:
         match key:
             case 127:
+                self.delchar()
+            case curses.KEY_BACKSPACE:
                 self.delchar()
             case curses.KEY_RIGHT:
                 pos = self.__window.getyx()[1]

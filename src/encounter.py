@@ -5,6 +5,7 @@ import curses.textpad
 from dataclasses import dataclass
 from typing import Generator
 
+import commands
 import gcurses
 import initiative
 from models import Action, Character, InitiativeCount, InitiativeKey
@@ -296,6 +297,21 @@ def _run_encounter(stdscr: curses.window):
     selected = 0
     init_win.set_selected(chars[selected])
 
+    parser = commands.CommandParser()
+
+    add_cmd = commands.Command("add")
+    add_cmd.add_argument(commands.ArgType.Choice, "type", choices=["player", "npc"])
+    add_cmd.add_argument(commands.ArgType.Int, "count")
+    add_cmd.add_argument(commands.ArgType.Remainder, "name")
+
+    parser.add_command(add_cmd)
+
+    def echo(string: str):
+        stdscr.move(0, 30)
+        stdscr.clrtoeol()
+        stdscr.addstr(string)
+        stdscr.refresh()
+
     running = True
     mode = 0  # 0 = global, 1 = command
     while running:
@@ -316,7 +332,31 @@ def _run_encounter(stdscr: curses.window):
                     mode = 1
                     command_box.append('/')
             case 1:
-                command_box.keystroke(ch)
+                if ch == 10:
+                    text = command_box.text
+                    command_box.clear()
+
+                    try:
+                        command, args = parser.parse_command(text)
+                    except ValueError as err:
+                        # TODO: handle!
+                        echo(f"Failed to parse: {err}")
+                        mode = 0
+                        continue
+
+                    match command:
+                        case "add":
+                            char_type = args["type"]
+                            count = args["count"]
+                            name = args["name"]
+                            char = Character(name=name, max_hp=1, hp=1, temp_hp=0, is_enemy=char_type == "npc")
+                            roster.add_character(char, count)
+                            init_win.set_initiative(roster.counts)
+                            chars = roster.characters
+
+                    mode = 0
+                else:
+                    command_box.keystroke(ch)
 
 
 def run_encounter(_):
