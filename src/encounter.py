@@ -1,121 +1,105 @@
-import bisect
 from collections import defaultdict
 import curses
 import curses.textpad
-from dataclasses import dataclass
-from typing import Generator
 
 import commands
 import gcurses
 import initiative
 from models import Action, Character, InitiativeCount, InitiativeKey
 import repo
-import util
-
-
-@dataclass
-class InitiativeGroup:
-    characters: list[str]
-    count: int
 
 
 class Encounter:
-    __initiative: list[tuple[InitiativeKey, Character]]
-    __active: int
+    __roster: initiative.Roster
+    __characters: dict[str, Character]
+    __actions: dict[str, int]
+    __active: tuple[int, str]
 
     # log
     __action_log: list[tuple[str, Action]]
 
-    # current turn state
-    __actions: int
-
     def __init__(self):
-        self.__initiative = []
-        self.__active = -1
-        self.__actions = 0
+        self.__roster = initiative.Roster()
+        self.__characters = {}
+        self.__actions = {}
+        self.__active = (-1, "")
 
-    def add_character(self, character: Character, initiative: int):
-        if self.__has_character(character.name):
-            raise ValueError("A character named '%s' already exists!" % character.name)
-        key = InitiativeKey(count=initiative, is_enemy=character.is_enemy)
-        index = bisect.bisect(self.__initiative, key, key=lambda x: x[0])
-        if index <= self.__active:
-            self.__active += 1
-        self.__initiative.insert(index, (key, character))
+    @property
+    def roster(self) -> initiative.Roster:
+        return self.__roster
 
-    def remove_character(self, name: str):
-        index = [entry[1].name for entry in self.__initiative].index(name)
-        if index <= self.__active:
-            self.__active -= 1
-        self.__initiative.pop(index)
-        if not self.__initiative:
-            self.__active = -1
-            self.__actions = 0
+    def add_character(self, character: Character, count: int):
+        self.__roster.add_character(character.name, character.is_enemy, count)
+        self.__characters[character.name] = character
+        self.__actions[character.name] = 3
+
+        if self.__active[0] != -1:
+            new_index = self.__roster.characters.index(self.__active[1])
+            self.__active = (new_index, self.__active[1])
+
+    def remove_character(self, character: str):
+        if character in self.__characters:
+            current_name = self.__active[1]
+            del self.__characters[character]
+            del self.__actions[character]
+            self.__roster.remove_character(character)
+            try:
+                index = self.__roster.characters.index(current_name)
+                self.__active = (index, current_name)
+            except ValueError:
+                self.__active = (-1, "")
+        else:
+            raise ValueError(f"No character '{character}'")
 
     def begin(self):
-        if self.__active == -1:
-            if self.__initiative:
-                self.__active = 0
-                self.__actions = 3
+        if self.__active[0] == -1:
+            if self.__roster.ncounts:
+                self.__active = (0, self.__roster.characters[0])
+                self.__actions[self.__active[1]] = 3
             else:
                 raise ValueError("No characters are in initiative!")
         else:
             raise ValueError("Already started!")
 
-    def act(self, action: Action) -> bool:
-        if self.__actions >= action.cost:
-            self.__actions -= action.cost
+    def act(self, action: Action):
+        char = self.active_character
+        if char is None:
+            raise ValueError("No active character.")
+        if self.__actions[char.name] >= action.cost:
+            self.__actions[char.name] -= action.cost
             # TODO: copy action instance?
-            self.__action_log.append((self.active_character.name, action))
-            return True
+            self.__action_log.append((char.name, action))
         else:
-            return False
+            # TODO: better messaging
+            raise ValueError("Not enough actions to do that!")
+
+    def get_actions(self, character: str) -> int:
+        return self.__actions[character]
+
+    @property
+    def active_character(self) -> Character | None:
+        if self.__active[0] == -1:
+            return None
+
+        return self.__characters[self.__active[1]]
 
     def next_turn(self):
-        self.__active = (self.__active + 1) % len(self.__initiative)
-        self.__actions = 3
+        next_index = (self.__active[0] + 1) % self.__roster.ncounts
+        self.__active = (next_index, self.__roster.characters[next_index])
+
+    def previous_turn(self):
+        next_index = (self.__active[0] - 1) % self.__roster.ncounts
+        self.__active = (next_index, self.__roster.characters[next_index])
 
     def update_character_hp(self, name: str, diff: int):
-        char = self.__find_character(name)
+        char = self.__characters[name]
         char.update_hp(diff)
 
     def set_character_hp(self, name: str, hp: int):
-        char = self.__find_character(name)
+        char = self.__characters[name]
         char.set_hp(hp)
 
-    def __has_character(self, name: str) -> bool:
-        return any((entry[1].name == name for entry in self.__initiative))
 
-    def __find_character(self, name: str) -> Character:
-        try:
-            return next((entry[1] for entry in self.__initiative if entry[1].name == name))
-        except StopIteration:
-            raise ValueError("Could not find character by name '%s'" % name)
-
-    @property
-    def active_character(self) -> Character:
-        if self.__active >= 0:
-            return self.__initiative[self.__active][1]
-        else:
-            raise ValueError("Encounter is not active!")
-
-    @property
-    def initiative_groups(self) -> list[InitiativeGroup]:
-        agg = util.aggregate(self.__initiative, key=lambda x: x[0])
-        return [InitiativeGroup(characters=[entry[1].name for entry in group], count=group[0][0].count) for group in agg]
-
-    @property
-    def actions(self) -> int:
-        return self.__actions
-
-    @property
-    def characters(self) -> Generator[Character, None, None]:
-        for x in self.__initiative:
-            yield x[1]
-
-
-# TODO:
-# - Avoid assigning ally_pair and enemy_pair multiple times
 class InitiativeWindow:
     ALLY_COLOR  = curses.COLOR_GREEN
     ENEMY_COLOR = curses.COLOR_RED
@@ -136,6 +120,9 @@ class InitiativeWindow:
     __parent: curses.window
     __scroll: int
 
+    __ally_attr: int
+    __enemy_attr: int
+
     def __init__(self, entries: list[InitiativeCount], parent: curses.window, size: tuple[int, int], pos: tuple[int, int] = (0, 0)):
         self.__pos = pos
         self.__size = size
@@ -147,12 +134,13 @@ class InitiativeWindow:
         self.__selected = None
         self.__active_count = None
         self.__scroll = 0
+
+        self.__ally_attr = gcurses.pair(self.ALLY_COLOR, -1)
+        self.__enemy_attr = gcurses.pair(self.ENEMY_COLOR, -1)
+
         self.__generate(entries)
 
     def __generate(self, entries: list[InitiativeCount]):
-        ally_pair = gcurses.pair(self.ALLY_COLOR, -1)
-        enemy_pair = gcurses.pair(self.ENEMY_COLOR, -1)
-
         self.__counts.clear()
         self.__name_blocks.clear()
         self.__box.clear()
@@ -186,7 +174,7 @@ class InitiativeWindow:
 
         self.__count_blocks = { key: [self.__pad.subpad(1, block[2], block[0], block[1]) for block in blocks] for key, blocks in count_blocks.items() }
         for key, blocks in count_blocks.items():
-            colorpair = enemy_pair if key.is_enemy else ally_pair
+            colorpair = self.__enemy_attr if key.is_enemy else self.__ally_attr
             for block in blocks:
                 subpad = self.__pad.subpad(1, block[2], block[0], block[1])
                 subpad.bkgd(colorpair | curses.A_BOLD | curses.A_DIM)
@@ -194,8 +182,6 @@ class InitiativeWindow:
         for group in self.__name_blocks.values():
             for block in group:
                 block.bkgd(curses.A_DIM)
-
-        self.set_selected(self.__selected)
 
     def scroll_to(self, name: str):
         if name not in self.__name_blocks:
@@ -239,16 +225,13 @@ class InitiativeWindow:
         self.refresh()
 
     def __set_active_count(self, count: InitiativeKey | None):
-        ally_pair = gcurses.pair(self.ALLY_COLOR, -1)
-        enemy_pair = gcurses.pair(self.ENEMY_COLOR, -1)
         if self.__active_count is not None:
             for block in self.__count_blocks[self.__active_count]:
-                block.bkgd((enemy_pair if self.__active_count.is_enemy else ally_pair) | curses.A_DIM)
+                block.bkgd((self.__enemy_attr if self.__active_count.is_enemy else self.__ally_attr) | curses.A_DIM)
         self.__active_count = count
         if self.__active_count is not None:
             for block in self.__count_blocks[self.__active_count]:
-                block.bkgd((enemy_pair if self.__active_count.is_enemy else ally_pair) | curses.A_BOLD)
-
+                block.bkgd((self.__enemy_attr if self.__active_count.is_enemy else self.__ally_attr) | curses.A_BOLD)
 
     def render(self):
         curses.textpad.rectangle(self.__parent, self.__pos[0], self.__pos[1], self.__pos[0] + self.__size[0], self.__pos[1] + self.__size[1])
@@ -267,6 +250,8 @@ class InitiativeWindow:
         # deselect if name is missing
         if self.__selected is not None and self.__selected not in self.__name_blocks:
             self.__selected = None
+            self.__active_count = None
+            self.refresh()
         else:
             self.set_selected(self.__selected)
 
@@ -275,24 +260,63 @@ class InitiativeWindow:
         return self.__size
 
 
+class StatusWindow:
+    __window: curses.window
+
+    character: Character | None
+    actions: int
+
+    def __init__(self, pos: tuple[int, int], character: Character | None = None, actions: int = 3):
+        self.__window = curses.newwin(6, 14, *pos)
+        self.character = character
+        self.actions = actions
+
+    def hide(self):
+        self.__window.erase()
+        self.__window.refresh()
+
+    def render(self):
+        self.__window.erase()
+        self.__window.border()
+        self.__window.move(0, 1)
+        self.__window.addstr("Status")
+        self.__window.move(1, 1)
+        self.__window.addstr(f"Name: {self.character.name if self.character else ""}")
+        self.__window.move(2, 1)
+        self.__window.addstr("Actions: ")
+        for _ in range(self.actions):
+            self.__window.addstr("\u25C6 ")
+        self.__window.move(3, 1)
+        self.__window.addstr("HP: ")
+        self.__window.move(4, 1)
+        self.__window.addstr("Temp HP: ")
+        self.__window.refresh()
+
+
 # TODO: Accept pre-built encounters
 def _run_encounter(stdscr: curses.window):
     curses.use_default_colors()
     curses.curs_set(0)
 
-    roster = initiative.Roster()
+    stdheight, stdwidth = stdscr.getmaxyx()
+
+    encounter = Encounter()
     init_win = InitiativeWindow(
-        roster.counts,
+        encounter.roster.counts,
         stdscr,
-        (15, 25),
+        (stdheight - 3, 30),
     )
-    command_box = gcurses.LineEdit((16, 0), 35)
+    status_win = StatusWindow((0, 31))
 
     stdscr.refresh()
     init_win.render()
 
-    chars = roster.characters
-    selected = 0
+    command_box = gcurses.LineEdit((stdheight - 1, 0), stdwidth)
+    status_bar = gcurses.StaticText((stdheight - 2, 0), stdwidth, "Ready")
+
+    status_attr = gcurses.pair(curses.COLOR_BLACK, curses.COLOR_GREEN)
+    error_attr = gcurses.pair(curses.COLOR_BLACK, curses.COLOR_RED) | curses.A_BOLD
+    status_bar.bkgd(status_attr)
 
     parser = commands.CommandParser()
 
@@ -305,14 +329,19 @@ def _run_encounter(stdscr: curses.window):
     rm_cmd.add_argument(commands.ArgType.Choice, "type", choices=["player", "enemy", "npc"])
     rm_cmd.add_argument(commands.ArgType.Remainder, "name")
 
+    exit_cmd = commands.Command("exit")
+
     parser.add_command(add_cmd)
     parser.add_command(rm_cmd)
+    parser.add_command(exit_cmd)
 
-    def echo(string: str):
-        stdscr.move(0, 30)
-        stdscr.clrtoeol()
-        stdscr.addstr(string)
-        stdscr.refresh()
+    def success(string: str):
+        status_bar.text = string
+        status_bar.bkgd(status_attr)
+
+    def error(string: str):
+        status_bar.text = string
+        status_bar.bkgd(error_attr)
 
     running = True
     mode = 0  # 0 = global, 1 = command
@@ -324,15 +353,29 @@ def _run_encounter(stdscr: curses.window):
         match mode:
             case 0:
                 if ch == ord('n'):
-                    selected = (selected + 1) % len(chars)
-                    init_win.set_selected(chars[selected])
+                    if encounter.active_character:
+                        encounter.next_turn()
+                        init_win.set_selected(encounter.active_character.name)
+                    else:
+                        try:
+                            encounter.begin()
+                            init_win.set_selected(encounter.active_character.name)
+                        except ValueError as err:
+                            error(str(err))
+                    status_win.character = encounter.active_character
+                    status_win.actions = encounter.get_actions(encounter.active_character.name)
+                    status_win.render()
                 elif ch == ord('p'):
-                    selected = (selected - 1) % len(chars)
-                    init_win.set_selected(chars[selected])
+                    if encounter.active_character:
+                        encounter.previous_turn()
+                        init_win.set_selected(encounter.active_character.name)
+                        status_win.character = encounter.active_character
+                        status_win.actions = encounter.get_actions(encounter.active_character.name)
+                        status_win.render()
                 elif ch == ord('/'):
                     curses.curs_set(1)
-                    mode = 1
                     command_box.append('/')
+                    mode = 1
             case 1:
                 if ch == 10:
                     text = command_box.text
@@ -341,9 +384,11 @@ def _run_encounter(stdscr: curses.window):
 
                     try:
                         command, args = parser.parse_command(text)
-                    except ValueError as err:
-                        # TODO: handle!
-                        echo(f"Failed to parse: {err}")
+                    except commands.CommandParseError as err:
+                        if err.command:
+                            error(f"usage: /{err.command.usage}")
+                        else:
+                            error(f"Error: {err}")
                         mode = 0
                         continue
 
@@ -357,7 +402,7 @@ def _run_encounter(stdscr: curses.window):
                                 try:
                                     player = repo.players.get(name)
                                 except repo.RepoError as re:
-                                    echo(f"Error: {str(re)}")
+                                    error(f"Error: {str(re)}")
                                     continue
 
                                 char = Character(name=player.name, max_hp=player.max_hp, hp=player.max_hp, temp_hp=0, is_enemy=False)
@@ -365,11 +410,11 @@ def _run_encounter(stdscr: curses.window):
                                 char = Character(name=name, max_hp=1, hp=1, temp_hp=0, is_enemy=char_type == "enemy")
 
                             try:
-                                roster.add_character(char, count)
-                                init_win.set_initiative(roster.counts)
-                                chars = roster.characters
+                                encounter.add_character(char, count)
+                                init_win.set_initiative(encounter.roster.counts)
+                                success(f"Added {char.name} to initiative.")
                             except ValueError as err:
-                                echo(f"Error: {err}")
+                                error(f"Error: {err}")
                         case "rm":
                             char_type, name = args["type"], args["name"]
 
@@ -377,17 +422,18 @@ def _run_encounter(stdscr: curses.window):
                                 try:
                                     player = repo.players.get(name)
                                 except repo.RepoError as re:
-                                    echo(f"Error: {str(re)}")
+                                    error(f"Error: {str(re)}")
                                     continue
                                 name = player.name
 
                             try:
-                                roster.remove_character(name)
-                                init_win.set_initiative(roster.counts)
-                                chars = roster.characters
+                                encounter.remove_character(name)
+                                init_win.set_initiative(encounter.roster.counts)
+                                success(f"Removed {name} from initiative.")
                             except ValueError as err:
-                                echo(f"Error: {err}")
-
+                                error(f"Error: {err}")
+                        case "exit":
+                            running = False
 
                     mode = 0
                 else:

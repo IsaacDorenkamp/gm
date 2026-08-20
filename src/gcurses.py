@@ -130,6 +130,72 @@ class WrapBox:
             yield self.__text
 
 
+class StaticText:
+    __window: curses.window
+    __width: int
+    __text: str
+
+    def __init__(self, pos: tuple[int, int], width: int, text: str = ""):
+        self.__window = curses.newwin(1, width, *pos)
+        self.__width = width
+        self.__text = text
+        try:
+            self.__window.addnstr(text, width)
+        except curses.error:
+            pass
+        self.__window.refresh()
+
+    def getbkgd(self) -> tuple[int, int]:
+        return self.__window.getbkgd()
+
+    def bkgd(self, bkgd: int):
+        self.__window.bkgd(bkgd)
+        self.__window.refresh()
+
+    @property
+    def width(self):
+        return self.__width
+
+    @width.setter
+    def width(self, width: int):
+        self.__width = width
+        self.__window.erase()
+        self.__window.refresh()
+        pos = self.__window.getbegyx()
+        self.__window = curses.newwin(1, width, *pos)
+
+    @property
+    def pos(self) -> tuple[int, int]:
+        return self.__window.getbegyx()
+
+    @pos.setter
+    def pos(self, pos: tuple[int, int]):
+        self.__window.erase()
+        self.__window.refresh()
+        self.__window = curses.newwin(1, self.__width, *pos)
+        try:
+            self.__window.addnstr(self.__text, self.__width)
+        except curses.error:
+            pass
+        self.__window.clrtoeol()
+        self.__window.refresh()
+
+    @property
+    def text(self) -> str:
+        return self.__text
+
+    @text.setter
+    def text(self, text: str):
+        self.__text = text
+        self.__window.move(0, 0)
+        try:
+            self.__window.addnstr(self.__text, self.__width)
+        except curses.error:
+            pass
+        self.__window.clrtoeol()
+        self.__window.refresh()
+
+
 class LineEdit:
     __window: curses.window
     __width: int
