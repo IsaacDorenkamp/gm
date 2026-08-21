@@ -17,4 +17,14 @@ def test_character_update_hp():
     c.update_hp(15, overflow_temp=True)
     assert c.hp == 10
     assert c.temp_hp == 5
+    c.reset_hp()
+    c.temp_hp = 10
+    c.update_hp(-15)
+    assert c.hp == 5
+    assert c.temp_hp == 0
+    c.reset_hp()
+    c.temp_hp = 10
+    c.update_hp(-5)
+    assert c.hp == 10
+    assert c.temp_hp == 5
 

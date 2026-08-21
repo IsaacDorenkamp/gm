@@ -53,5 +53,9 @@ class Roster:
             characters.extend(count.characters)
         return characters
 
+    @property
+    def ncharacters(self) -> int:
+        return sum([len(count.characters) for count in self.__counts]) if self.__counts else 0
+
 
 __all__ = ["Roster"]

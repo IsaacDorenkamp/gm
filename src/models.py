@@ -116,10 +116,15 @@ class StrikeAction:
 
 
 @dataclass
+class CustomAction:
+    description: str
+
+
+@dataclass
 class Action:
     cost: ActionCost
-    name: str
-    action: StrikeAction | SaveAction
+    action: StrikeAction | SaveAction | CustomAction
+    name: str | None = None
 
 
 @dataclass

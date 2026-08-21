@@ -1,11 +1,13 @@
 from collections import defaultdict
 import curses
 import curses.textpad
+from dataclasses import dataclass
+import math
 
 import commands
 import gcurses
 import initiative
-from models import Action, Character, InitiativeCount, InitiativeKey
+from models import Action, CustomAction, Character, InitiativeCount, InitiativeKey
 import repo
 
 
@@ -23,6 +25,8 @@ class Encounter:
         self.__characters = {}
         self.__actions = {}
         self.__active = (-1, "")
+
+        self.__action_log = []
 
     @property
     def roster(self) -> initiative.Roster:
@@ -62,7 +66,7 @@ class Encounter:
         else:
             raise ValueError("Already started!")
 
-    def act(self, action: Action):
+    def act(self, action: Action) -> int:
         char = self.active_character
         if char is None:
             raise ValueError("No active character.")
@@ -70,6 +74,7 @@ class Encounter:
             self.__actions[char.name] -= action.cost
             # TODO: copy action instance?
             self.__action_log.append((char.name, action))
+            return self.__actions[char.name]
         else:
             # TODO: better messaging
             raise ValueError("Not enough actions to do that!")
@@ -85,11 +90,11 @@ class Encounter:
         return self.__characters[self.__active[1]]
 
     def next_turn(self):
-        next_index = (self.__active[0] + 1) % self.__roster.ncounts
+        next_index = (self.__active[0] + 1) % self.__roster.ncharacters
         self.__active = (next_index, self.__roster.characters[next_index])
 
     def previous_turn(self):
-        next_index = (self.__active[0] - 1) % self.__roster.ncounts
+        next_index = (self.__active[0] - 1) % self.__roster.ncharacters
         self.__active = (next_index, self.__roster.characters[next_index])
 
     def update_character_hp(self, name: str, diff: int):
@@ -279,28 +284,116 @@ class StatusWindow:
     def render(self):
         self.__window.erase()
         self.__window.border()
-        self.__window.move(0, 1)
+        self.__window.move(0, 2)
         self.__window.addstr("Status")
         self.__window.move(1, 1)
-        self.__window.addnstr(f"Name: {self.character.name if self.character else ""}", 28)
-        self.__window.move(2, 1)
-        self.__window.addstr("Actions: ")
-        for _ in range(self.actions):
-            self.__window.addstr("\u25C6  ")
-
-        for _ in range(3 - self.actions):
-            self.__window.addstr("\u25C7  ")
-        self.__window.move(3, 1)
-        self.__window.addstr("HP: ")
-        self.__window.move(4, 1)
-        self.__window.addstr("Temp HP: ")
+        if self.character:
+            self.__window.addnstr(f"Name: {self.character.name}", 28)
+            self.__window.move(2, 1)
+            self.__window.addstr("Actions: ")
+            for _ in range(self.actions):
+                self.__window.addstr("\u25C6  ")
+            for _ in range(3 - self.actions):
+                self.__window.addstr("\u25C7  ")
+            self.__window.move(3, 1)
+            self.__window.addstr(f"HP: {self.character.hp}/{self.character.max_hp}")
+            self.__window.move(4, 1)
+            self.__window.addstr(f"Temp HP: {self.character.temp_hp}")
         self.__window.refresh()
+
+
+# TODO: move this definition
+@dataclass
+class Message:
+    author: str
+    text: str
+
+    author_attr: int | None = None
+    text_attr: int | None = None
+
+    @property
+    def plaintext(self):
+        return f"[{self.author}] {self.text}"
+
+    def __len__(self) -> int:
+        return len(self.plaintext)
+
+
+class MessageWindow:
+    __window: curses.window
+    __content: curses.window
+
+    __visible: bool
+    __scroll: int
+
+    __messages: list[Message]
+    __lines: list[str]
+
+    def __init__(self, pos: tuple[int, int], size: tuple[int, int]):
+        self.__window = curses.newwin(*size, *pos)
+        self.__content = self.__window.derwin(size[0] - 2, size[1] - 2, 1, 1)
+        self.__scroll = 0
+        self.__messages = []
+        self.__lines = []
+        self.__visible = False
+
+    def add_message(self, message: Message):
+        width = self.__content.getmaxyx()[1]
+        self.__messages.append(message)
+        text = message.plaintext
+        height, width = self.__content.getmaxyx()
+        max_scroll = max(0, len(self.__lines) - height)
+        while text:
+            self.__lines.append(text[:width])
+            if self.__visible and self.__scroll == max_scroll:
+                self.__content.move(height - 1, 0)
+                self.__content.insertln()
+                try:
+                    self.__content.addnstr(self.__lines[-1], width)
+                except curses.error:
+                    pass
+            text = text[width:]
+
+        self.__content.refresh()
+
+    def show(self):
+        self.__visible = True
+        self.__render()
+
+    def hide(self):
+        self.__visible = False
+        self.__window.erase()
+        self.__window.refresh()
+
+    def __render(self):
+        self.__window.border()
+        self.__window.move(0, 2)
+        self.__window.addstr("Log")
+        height, width = self.__content.getmaxyx()
+        for line_no in range(height):
+            index = line_no + self.__scroll
+            if index >= len(self.__lines):
+                break
+            line = self.__lines[line_no + self.__scroll]
+            self.__content.move(line_no, 0)
+            try:
+                self.__content.addnstr(line, width)
+            except curses.error:
+                pass
+            self.__content.clrtoeol()
+        self.__window.refresh()
+        self.__content.refresh()
+
+    @property
+    def visible(self) -> bool:
+        return self.__visible
 
 
 # TODO: Accept pre-built encounters
 def _run_encounter(stdscr: curses.window):
     curses.use_default_colors()
     curses.curs_set(0)
+    curses.set_escdelay(25)
 
     stdheight, stdwidth = stdscr.getmaxyx()
 
@@ -311,9 +404,14 @@ def _run_encounter(stdscr: curses.window):
         (stdheight - 3, 30),
     )
     status_win = StatusWindow((0, 31))
+    msg_win = MessageWindow((stdheight // 2, 31), (stdheight // 2 - 1, 100))
 
     stdscr.refresh()
     init_win.render()
+    msg_win.show()
+
+    for i in range(50):
+        msg_win.add_message(Message(author="System", text=f"Message {i + 1}"))
 
     command_box = gcurses.LineEdit((stdheight - 1, 0), stdwidth)
     status_bar = gcurses.StaticText((stdheight - 2, 0), stdwidth, "Ready")
@@ -333,10 +431,15 @@ def _run_encounter(stdscr: curses.window):
     rm_cmd.add_argument(commands.ArgType.Choice, "type", choices=["player", "enemy", "npc"])
     rm_cmd.add_argument(commands.ArgType.Remainder, "name")
 
+    act_cmd = commands.Command("act")
+    act_cmd.add_argument(commands.ArgType.Int, "actions", max=3)
+    act_cmd.add_argument(commands.ArgType.Remainder, "description")
+
     exit_cmd = commands.Command("exit")
 
     parser.add_command(add_cmd)
     parser.add_command(rm_cmd)
+    parser.add_command(act_cmd)
     parser.add_command(exit_cmd)
 
     def success(string: str):
@@ -383,7 +486,11 @@ def _run_encounter(stdscr: curses.window):
                     command_box.append('/')
                     mode = 1
             case 1:
-                if ch == 10:
+                if ch == 27:
+                    command_box.clear()
+                    curses.curs_set(0)
+                    mode = 0
+                elif ch == 10:
                     text = command_box.text
                     command_box.clear()
                     curses.curs_set(0)
@@ -438,6 +545,15 @@ def _run_encounter(stdscr: curses.window):
                                 success(f"Removed {name} from initiative.")
                             except ValueError as err:
                                 error(f"Error: {err}")
+                        case "act":
+                            actions, description = args["actions"], args["description"]
+                            action = Action(cost=actions, action=CustomAction(description=description))
+                            try:
+                                remaining = encounter.act(action)
+                                status_win.actions = remaining
+                                status_win.render()
+                            except ValueError as err:
+                                error(str(err))
                         case "exit":
                             running = False
 
