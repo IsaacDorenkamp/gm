@@ -51,11 +51,12 @@ class Encounter:
         else:
             raise ValueError(f"No character '{character}'")
 
-    def begin(self):
+    def begin(self) -> str:
         if self.__active[0] == -1:
             if self.__roster.ncounts:
                 self.__active = (0, self.__roster.characters[0])
                 self.__actions[self.__active[1]] = 3
+                return self.__active[1]
             else:
                 raise ValueError("No characters are in initiative!")
         else:
@@ -267,7 +268,7 @@ class StatusWindow:
     actions: int
 
     def __init__(self, pos: tuple[int, int], character: Character | None = None, actions: int = 3):
-        self.__window = curses.newwin(6, 14, *pos)
+        self.__window = curses.newwin(6, 30, *pos)
         self.character = character
         self.actions = actions
 
@@ -281,11 +282,14 @@ class StatusWindow:
         self.__window.move(0, 1)
         self.__window.addstr("Status")
         self.__window.move(1, 1)
-        self.__window.addstr(f"Name: {self.character.name if self.character else ""}")
+        self.__window.addnstr(f"Name: {self.character.name if self.character else ""}", 28)
         self.__window.move(2, 1)
         self.__window.addstr("Actions: ")
         for _ in range(self.actions):
-            self.__window.addstr("\u25C6 ")
+            self.__window.addstr("\u25C6  ")
+
+        for _ in range(3 - self.actions):
+            self.__window.addstr("\u25C7  ")
         self.__window.move(3, 1)
         self.__window.addstr("HP: ")
         self.__window.move(4, 1)
@@ -356,14 +360,16 @@ def _run_encounter(stdscr: curses.window):
                     if encounter.active_character:
                         encounter.next_turn()
                         init_win.set_selected(encounter.active_character.name)
+                        name = encounter.active_character.name
                     else:
                         try:
-                            encounter.begin()
-                            init_win.set_selected(encounter.active_character.name)
+                            name = encounter.begin()
+                            init_win.set_selected(name)
                         except ValueError as err:
                             error(str(err))
+                            continue
                     status_win.character = encounter.active_character
-                    status_win.actions = encounter.get_actions(encounter.active_character.name)
+                    status_win.actions = encounter.get_actions(name)
                     status_win.render()
                 elif ch == ord('p'):
                     if encounter.active_character:

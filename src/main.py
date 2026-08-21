@@ -91,8 +91,11 @@ def add_player(args):
 
 
 def list_players(_):
-    for player in repo.players.all():
-        print(f"\x1b[1m{player.id}\x1b[0m: {player.name} (\x1b[32m{player.max_hp}hp\x1b[0m)")
+    try:
+        for player in repo.players.all():
+            print(f"\x1b[1m{player.id}\x1b[0m: {player.name} (\x1b[32m{player.max_hp}hp\x1b[0m)")
+    except repo.RepoError as err:
+        print(f"\x1b[31;1mError:\x1b[0m {err}")
 
 
 def main() -> int:
