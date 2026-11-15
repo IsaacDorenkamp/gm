@@ -1,0 +1,23 @@
+[project]
+name = "gm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Isaac Dorenkamp", email = "quantumisaac@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fbs",
+    "pyqt6>=6.12.1",
+]
+
+[project.scripts]
+gm = "gm:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+fbs = { path = "/home/isaac/software/fbs-1.2.1" }
